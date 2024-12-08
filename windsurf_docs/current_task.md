@@ -21,10 +21,11 @@
   - [x] Add API rate limit tests
   - [x] Add rate limiter tests 
   - [x] Add visualization component tests 
-  - [ ] Fix Kraken client tests
-    - [ ] Mock API responses
-    - [ ] Add proper test fixtures
-    - [ ] Handle rate limiting in tests
+  - [x] Fix Kraken client tests
+    - [x] Mock API responses
+    - [x] Add proper test fixtures
+    - [x] Handle rate limiting in tests
+    - [x] Update tests for ledger and export functionality
   - [ ] Add integration tests
 
 ## Additional Technical Improvements
@@ -33,6 +34,7 @@
   - [x] Implement request retry logic
   - [x] Add rate limiting with proper backoff
   - [x] Add connection health monitoring
+  - [x] Focus client on ledger and export functionality
   - [ ] Implement websocket connection for real-time data
 - [ ] Add comprehensive logging for debugging
 
@@ -54,3 +56,5 @@
 - [x] Implement API rate limiting in Kraken client
 - [x] Add retry logic for transient failures
 - [x] Enhance error handling for API calls
+- [x] Initialize and set up Git repository
+- [x] Create private GitHub repository

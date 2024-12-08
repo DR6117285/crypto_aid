@@ -23,7 +23,7 @@ class KrakenConfigError(KrakenError):
 class KrakenClient:
     """
     A client for interacting with the Kraken cryptocurrency exchange.
-    Uses REST API for market data and trading operations.
+    Focused on ledger entries and data export functionality.
     """
     def __init__(self, api_key: str = None, private_key: str = None):
         """
@@ -43,12 +43,11 @@ class KrakenClient:
         self.rate_limiter = RateLimiter()
         self._last_request_time = datetime.now()
         self._consecutive_failures = 0
-        self._health_status = True
         
     @property
     def is_healthy(self) -> bool:
         """Check if the client is in a healthy state."""
-        return self._health_status and self._consecutive_failures < 3
+        return self._consecutive_failures < 3
         
     def _validate_api_keys(self, api_key: Optional[str], private_key: Optional[str]) -> None:
         """
@@ -101,124 +100,104 @@ class KrakenClient:
             logger.warning(f"Rate limit reached. Waiting {wait_time:.2f} seconds...")
             sleep(wait_time)
         
-        for attempt in range(MAX_RETRIES):
-            try:
-                result = request_func(*args, **kwargs)
-                self._consecutive_failures = 0
-                self._health_status = True
-                self._last_request_time = datetime.now()
-                return result
-            except Exception as e:
-                self._consecutive_failures += 1
-                if self._consecutive_failures >= 3:
-                    self._health_status = False
-                    
-                if attempt == MAX_RETRIES - 1:
-                    logger.error(f"Failed after {MAX_RETRIES} attempts: {str(e)}")
-                    raise KrakenError(f"API request failed: {str(e)}")
-                    
-                logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
-                sleep(RETRY_DELAY * (attempt + 1))
-    
-    def get_asset_pairs(self) -> pd.DataFrame:
-        """
-        Get information about asset pairs.
+        try:
+            for attempt in range(MAX_RETRIES):
+                try:
+                    result = request_func(*args, **kwargs)
+                    self._consecutive_failures = 0
+                    self._last_request_time = datetime.now()
+                    return result
+                except Exception as e:
+                    if attempt == MAX_RETRIES - 1:
+                        raise e
+                    logger.warning(f"Attempt {attempt + 1} failed: {str(e)}")
+                    sleep(RETRY_DELAY * (attempt + 1))
+        except Exception as e:
+            self._consecutive_failures += 1
+            logger.error(f"Failed after {MAX_RETRIES} attempts: {str(e)}")
+            raise KrakenError(f"API request failed: {str(e)}")
         
-        Returns:
-            pd.DataFrame: Asset pair information
-            
-        Raises:
-            KrakenError: If the API request fails
+    def get_ledger_entries(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, 
+                          asset: Optional[str] = None, type: Optional[str] = None) -> pd.DataFrame:
         """
-        return self._handle_request(self.k.get_tradable_asset_pairs)
-    
-    def get_ticker(self, pair: str) -> pd.DataFrame:
-        """
-        Get ticker information for a trading pair.
+        Get ledger entries within the specified time range.
         
         Args:
-            pair (str): Trading pair (e.g., 'XXBTZUSD' for BTC/USD)
+            start_time (datetime, optional): Start time for ledger entries
+            end_time (datetime, optional): End time for ledger entries
+            asset (str, optional): Filter by asset (e.g., 'XBT' for Bitcoin)
+            type (str, optional): Filter by type (e.g., 'trade', 'deposit', 'withdrawal')
             
         Returns:
-            pd.DataFrame: Ticker information including current price
-            
-        Raises:
-            KrakenError: If the API request fails
-        """
-        return self._handle_request(self.k.get_ticker_information, pair)
-    
-    def get_ohlc(self, pair: str, interval: int = 1440,
-                 since: Optional[datetime] = None) -> pd.DataFrame:
-        """
-        Get OHLC (Open, High, Low, Close) data.
-        
-        Args:
-            pair (str): Trading pair
-            interval (int): Time frame interval in minutes (default: 1440 for 1 day)
-            since (datetime, optional): Start time for historical data
-            
-        Returns:
-            pd.DataFrame: OHLC data with proper datetime index
-            
-        Raises:
-            KrakenError: If the API request fails
-        """
-        return self._handle_request(self.k.get_ohlc_data, pair, interval=interval, since=since)
-    
-    def get_order_book(self, pair: str, count: int = 100) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Get order book data.
-        
-        Args:
-            pair (str): Trading pair
-            count (int): Number of orders to retrieve
-            
-        Returns:
-            Tuple[pd.DataFrame, pd.DataFrame]: Tuple containing (asks, bids) DataFrames with columns [price, volume, timestamp]
-            
-        Raises:
-            KrakenError: If the API request fails
-        """
-        return self._handle_request(self.k.get_order_book, pair, count=count)
-    
-    def get_account_balance(self) -> pd.DataFrame:
-        """
-        Get account balance information.
-        Requires API key with appropriate permissions.
-        
-        Returns:
-            pd.DataFrame: Account balance information
+            pd.DataFrame: Ledger entries with columns [refid, time, type, asset, amount, fee, balance]
             
         Raises:
             KrakenConfigError: If API keys are not configured
             KrakenError: If the API request fails
         """
         if not self.has_private_access:
-            raise KrakenConfigError("API keys required for account balance")
-        return self._handle_request(self.k.get_account_balance, is_private=True)
-    
-    @staticmethod
-    def format_pair(base: str, quote: str) -> str:
+            raise KrakenConfigError("API keys required for ledger entries")
+            
+        params = {}
+        if start_time:
+            params['start'] = int(start_time.timestamp())
+        if end_time:
+            params['end'] = int(end_time.timestamp())
+        if asset:
+            params['asset'] = asset
+        if type:
+            params['type'] = type
+            
+        return self._handle_request(self.k.get_ledgers_info, params, is_private=True)
+        
+    def export_ledger_data(self, report_type: str, description: str, 
+                          start_time: datetime, end_time: datetime, 
+                          format: str = 'CSV') -> str:
         """
-        Format trading pair string according to Kraken's convention.
+        Request an export of ledger data.
         
         Args:
-            base (str): Base currency (e.g., 'BTC')
-            quote (str): Quote currency (e.g., 'USD')
+            report_type (str): Type of report ('ledgers')
+            description (str): Description of the export
+            start_time (datetime): Start time for the export
+            end_time (datetime): End time for the export
+            format (str): Export format ('CSV' or 'PDF')
             
         Returns:
-            str: Formatted pair string (e.g., 'XXBTZUSD')
-        """
-        # Common mappings for Kraken's asset codes
-        asset_map = {
-            'BTC': 'XBT',
-            'DOGE': 'XDG'
-        }
-        
-        base = asset_map.get(base, base)
-        if base in ['BTC', 'XBT', 'ETH', 'LTC', 'XRP']:
-            base = f'X{base}'
-        if quote in ['USD', 'EUR', 'GBP', 'JPY']:
-            quote = f'Z{quote}'
+            str: Report ID that can be used to check the export status
             
-        return f'{base}{quote}'
+        Raises:
+            KrakenConfigError: If API keys are not configured
+            KrakenError: If the API request fails
+        """
+        if not self.has_private_access:
+            raise KrakenConfigError("API keys required for data export")
+            
+        params = {
+            'report': report_type,
+            'description': description,
+            'format': format,
+            'starttm': int(start_time.timestamp()),
+            'endtm': int(end_time.timestamp())
+        }
+            
+        return self._handle_request(self.k.add_export, params, is_private=True)
+        
+    def get_export_status(self, report_id: str) -> Dict:
+        """
+        Check the status of a requested export.
+        
+        Args:
+            report_id (str): ID of the export request
+            
+        Returns:
+            Dict: Status information including completion status and download URL if ready
+            
+        Raises:
+            KrakenConfigError: If API keys are not configured
+            KrakenError: If the API request fails
+        """
+        if not self.has_private_access:
+            raise KrakenConfigError("API keys required for export status")
+            
+        return self._handle_request(self.k.get_export_status, {'report': report_id}, is_private=True)
