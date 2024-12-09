@@ -2,172 +2,91 @@
 Command-line interface for crypto_aid.
 """
 import click
-import pandas as pd
-from typing import List, Optional
 import json
-from datetime import datetime
-from ..market_data.kraken_client import KrakenClient
-import logging
+from typing import List, Optional
 
-logger = logging.getLogger(__name__)
+from ..market_data.kraken_client import KrakenClient
+from ..analysis.technical import TechnicalAnalysis
+from ..analysis.recommendation import TradeRecommender
 
 @click.group()
 def cli():
-    """Crypto trading aid command line interface."""
+    """Crypto trading aid CLI"""
     pass
 
 @cli.command()
 @click.argument('pairs', nargs=-1, required=True)
-@click.option('--output', '-o', type=click.Path(), help='Output file for the data')
-def fetch_data(pairs: List[str], output: Optional[str] = None):
-    """
-    Fetch market data for specified trading pairs.
+@click.option('-o', '--output', type=click.Path(), help='Save output to file')
+def fetch_data(pairs: List[str], output: Optional[str]):
+    """Fetch market data for specified trading pairs"""
+    client = KrakenClient()
+    data = client.get_ticker_info(list(pairs))
     
-    Args:
-        pairs: List of trading pairs (e.g., XBT/USD)
-        output: Optional output file path
-    """
-    try:
-        client = KrakenClient()
-        data = client.get_ticker(list(pairs))
-        
-        # Format output
-        formatted_data = json.dumps(data, indent=2, default=str)
-        
-        if output:
-            with open(output, 'w') as f:
-                f.write(formatted_data)
-            click.echo(f"Data written to {output}")
-        else:
-            click.echo(formatted_data)
-            
-    except Exception as e:
-        logger.error(f"Error fetching data: {str(e)}")
-        click.echo(f"Error: {str(e)}", err=True)
-        raise click.Abort()
-
-@cli.command()
-@click.argument('portfolio_file', type=click.Path(exists=True))
-@click.option('--detailed/--summary', default=False, help='Show detailed analysis')
-def analyze_portfolio(portfolio_file: str, detailed: bool):
-    """
-    Analyze portfolio from CSV file.
-    
-    Args:
-        portfolio_file: Path to portfolio CSV file
-        detailed: Whether to show detailed analysis
-    """
-    try:
-        # Read portfolio data
-        df = pd.read_csv(portfolio_file)
-        
-        # Calculate basic metrics
-        total_value = (df['amount'] * df['entry_price']).sum()
-        allocations = df.assign(
-            value=df['amount'] * df['entry_price']
-        ).assign(
-            allocation=lambda x: x['value'] / total_value * 100
-        )
-        
-        # Display results
-        click.echo("\nPortfolio Analysis")
-        click.echo("=================")
-        click.echo(f"Total Value: ${total_value:,.2f}")
-        click.echo("\nAllocations:")
-        for _, row in allocations.iterrows():
-            click.echo(f"{row['asset']}: {row['allocation']:.2f}%")
-            
-        if detailed:
-            click.echo("\nDetailed Analysis")
-            click.echo(allocations.to_string())
-            
-    except Exception as e:
-        logger.error(f"Error analyzing portfolio: {str(e)}")
-        click.echo(f"Error: {str(e)}", err=True)
-        raise click.Abort()
+    if output:
+        with open(output, 'w') as f:
+            json.dump(data, f, indent=2)
+        click.echo(f"Data saved to {output}")
+    else:
+        click.echo(json.dumps(data, indent=2))
 
 @cli.command()
 @click.argument('pairs', nargs=-1, required=True)
-@click.option('--risk-level', type=click.Choice(['low', 'medium', 'high']), default='medium')
-def recommend_trades(pairs: List[str], risk_level: str):
-    """
-    Get trade recommendations for specified pairs.
+@click.option('--indicators', default='all', help='Comma-separated list of indicators')
+@click.option('--timeframe', default='1d', help='Analysis timeframe')
+def analyze(pairs: List[str], indicators: str, timeframe: str):
+    """Run technical analysis on specified pairs"""
+    client = KrakenClient()
+    analyzer = TechnicalAnalysis(client)
     
-    Args:
-        pairs: Trading pairs to analyze
-        risk_level: Risk tolerance level
-    """
-    try:
-        client = KrakenClient()
-        data = client.get_ticker(list(pairs))
-        
-        click.echo("\nTrade Recommendations")
-        click.echo("====================")
-        
-        for pair, info in data.items():
-            # Example simple strategy based on RSI
-            rsi = float(info.get('rsi', 50))  # Default to neutral if not available
-            
-            if rsi < 30:
-                signal = "BUY"
-                reason = "Oversold condition (RSI < 30)"
-            elif rsi > 70:
-                signal = "SELL"
-                reason = "Overbought condition (RSI > 70)"
-            else:
-                signal = "HOLD"
-                reason = "Neutral conditions"
-                
-            click.echo(f"\n{pair}:")
-            click.echo(f"Signal: {signal}")
-            click.echo(f"Reason: {reason}")
-            click.echo(f"Current Price: {info.get('price', 'N/A')}")
-            
-    except Exception as e:
-        logger.error(f"Error generating recommendations: {str(e)}")
-        click.echo(f"Error: {str(e)}", err=True)
-        raise click.Abort()
+    indicator_list = indicators.split(',') if indicators != 'all' else None
+    results = analyzer.analyze(pairs, timeframe, indicators=indicator_list)
+    click.echo(json.dumps(results, indent=2))
+
+@cli.command()
+@click.argument('pairs', nargs=-1, required=True)
+@click.option('--risk-level', default='medium', type=click.Choice(['low', 'medium', 'high']))
+@click.option('--min-confidence', default=70, type=int)
+def recommend(pairs: List[str], risk_level: str, min_confidence: int):
+    """Get trade recommendations based on analysis"""
+    client = KrakenClient()
+    analyzer = TechnicalAnalysis(client)
+    recommender = TradeRecommender(analyzer)
+    
+    recommendations = recommender.get_recommendations(
+        pairs, 
+        risk_level=risk_level,
+        min_confidence=min_confidence
+    )
+    click.echo(json.dumps(recommendations, indent=2))
 
 @cli.command()
 def query():
-    """Interactive query mode for portfolio information."""
-    try:
-        click.echo("Interactive Query Mode")
-        click.echo("Enter your question (or 'exit' to quit):")
-        
-        while True:
-            question = click.prompt('> ').lower()
+    """Interactive mode for market queries"""
+    client = KrakenClient()
+    analyzer = TechnicalAnalysis(client)
+    
+    click.echo("Interactive Query Mode")
+    click.echo("Enter your question (or 'exit' to quit):")
+    
+    while True:
+        question = click.prompt('> ')
+        if question.lower() == 'exit':
+            break
             
-            if question == 'exit':
-                break
-                
-            # Simple keyword-based response system
-            if 'allocation' in question or 'holding' in question:
-                asset = None
-                for coin in ['btc', 'eth', 'xrp']:  # Add more as needed
-                    if coin in question:
-                        asset = coin.upper()
-                        break
-                
-                if asset:
-                    # Read portfolio data (in real implementation, this would be cached)
-                    df = pd.read_csv('portfolio.csv')
-                    asset_data = df[df['asset'] == asset]
-                    
-                    if not asset_data.empty:
-                        amount = asset_data.iloc[0]['amount']
-                        click.echo(f"You are holding {amount} {asset}")
-                    else:
-                        click.echo(f"No {asset} holdings found in your portfolio")
-                else:
-                    click.echo("Please specify which asset you're asking about")
+        try:
+            # Simple question handling - can be expanded
+            if 'price' in question.lower():
+                pair = next((p for p in ['BTC/USD', 'ETH/USD'] if p.split('/')[0].lower() in question.lower()), 'BTC/USD')
+                price = client.get_ticker_info([pair])[pair]['last']
+                click.echo(f"{pair}: ${price:,.2f}")
+            elif 'rsi' in question.lower():
+                pair = next((p for p in ['BTC/USD', 'ETH/USD'] if p.split('/')[0].lower() in question.lower()), 'BTC/USD')
+                rsi = analyzer.get_rsi(pair)
+                click.echo(f"{pair} RSI: {rsi:.2f}")
             else:
-                click.echo("I'm not sure how to answer that question. Try asking about your allocations or holdings.")
-                
-    except Exception as e:
-        logger.error(f"Error in query mode: {str(e)}")
-        click.echo(f"Error: {str(e)}", err=True)
-        raise click.Abort()
+                click.echo("I don't understand that question. Try asking about prices or RSI values.")
+        except Exception as e:
+            click.echo(f"Error processing request: {str(e)}")
 
 if __name__ == '__main__':
     cli()

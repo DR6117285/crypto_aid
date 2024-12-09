@@ -1,7 +1,7 @@
 # CLI Commands Documentation
 
 ## Overview
-The crypto_aid CLI provides several commands to help you manage your cryptocurrency portfolio, fetch market data, and get trading recommendations.
+The crypto_aid CLI provides several commands to help you analyze cryptocurrency market data and get trading recommendations.
 
 ## Available Commands
 
@@ -27,40 +27,34 @@ crypto_aid fetch-data XBT/USD ETH/USD
 crypto_aid fetch-data XBT/USD -o market_data.json
 ```
 
-### 2. analyze-portfolio
-Analyze a portfolio from a CSV file.
+### 2. analyze
+Run technical analysis on specified trading pairs.
 
 ```bash
-crypto_aid analyze-portfolio PORTFOLIO_FILE [OPTIONS]
+crypto_aid analyze [PAIRS...] [OPTIONS]
 ```
 
 **Arguments:**
-- `PORTFOLIO_FILE`: Path to portfolio CSV file
+- `PAIRS`: One or more trading pairs to analyze
 
 **Options:**
-- `--detailed/--summary`: Show detailed analysis or summary (default: summary)
-
-**CSV Format:**
-```csv
-asset,amount,entry_price
-BTC,1.5,45000
-ETH,10,2800
-```
+- `--indicators [rsi,macd,bb]`: Specify which indicators to use (default: all)
+- `--timeframe [1h,4h,1d]`: Analysis timeframe (default: 1d)
 
 **Example:**
 ```bash
-# Basic analysis
-crypto_aid analyze-portfolio portfolio.csv
+# Analyze Bitcoin with all indicators
+crypto_aid analyze XBT/USD
 
-# Detailed analysis
-crypto_aid analyze-portfolio portfolio.csv --detailed
+# Analyze Ethereum with specific indicators
+crypto_aid analyze ETH/USD --indicators rsi,macd
 ```
 
-### 3. recommend-trades
+### 3. recommend
 Get trade recommendations based on technical analysis.
 
 ```bash
-crypto_aid recommend-trades [PAIRS...] [OPTIONS]
+crypto_aid recommend [PAIRS...] [OPTIONS]
 ```
 
 **Arguments:**
@@ -68,28 +62,29 @@ crypto_aid recommend-trades [PAIRS...] [OPTIONS]
 
 **Options:**
 - `--risk-level [low|medium|high]`: Set risk tolerance (default: medium)
+- `--min-confidence [0-100]`: Minimum confidence score for recommendations (default: 70)
 
 **Example:**
 ```bash
 # Get recommendations for Bitcoin
-crypto_aid recommend-trades XBT/USD
+crypto_aid recommend XBT/USD
 
-# Get recommendations with low risk tolerance
-crypto_aid recommend-trades XBT/USD --risk-level low
+# Get low-risk recommendations
+crypto_aid recommend XBT/USD --risk-level low
 ```
 
 ### 4. query
-Interactive mode for querying portfolio information.
+Interactive mode for querying market information.
 
 ```bash
 crypto_aid query
 ```
 
-This command starts an interactive session where you can ask questions about your portfolio.
+This command starts an interactive session where you can ask questions about market data and analysis.
 
 **Example Questions:**
-- "What is my BTC allocation?"
-- "How much ETH am I holding?"
+- "What's the current price of BTC?"
+- "Show me the RSI for ETH"
 - Type 'exit' to quit
 
 **Example:**
@@ -97,8 +92,8 @@ This command starts an interactive session where you can ask questions about you
 $ crypto_aid query
 Interactive Query Mode
 Enter your question (or 'exit' to quit):
-> what is my btc allocation?
-You are holding 1.5 BTC
+> what's the current btc price?
+BTC/USD: $45,000
 > exit
 ```
 
@@ -113,38 +108,23 @@ These options are available for all commands:
 - Failed commands exit with non-zero status codes
 - API errors and rate limits are handled automatically
 
-## Configuration
-The CLI uses the following configuration sources:
-1. Environment variables
-2. Configuration files
-3. Command-line arguments (highest priority)
-
 ## Examples of Common Workflows
 
-### 1. Daily Portfolio Check
+### 1. Market Analysis
 ```bash
-# Get current market prices
+# Get current market data
 crypto_aid fetch-data XBT/USD ETH/USD
 
-# Analyze portfolio
-crypto_aid analyze-portfolio portfolio.csv --detailed
+# Run technical analysis
+crypto_aid analyze XBT/USD ETH/USD
 
-# Check for trade recommendations
-crypto_aid recommend-trades XBT/USD ETH/USD
+# Get trade recommendations
+crypto_aid recommend XBT/USD ETH/USD --risk-level low
 ```
 
-### 2. Quick Portfolio Query
+### 2. Quick Market Check
 ```bash
 crypto_aid query
-> what is my btc allocation?
+> what's the current btc price?
+> show me the rsi
 > exit
-```
-
-### 3. Market Analysis
-```bash
-# Get market data and save to file
-crypto_aid fetch-data XBT/USD ETH/USD -o analysis.json
-
-# Get trade recommendations with low risk
-crypto_aid recommend-trades XBT/USD ETH/USD --risk-level low
-```
