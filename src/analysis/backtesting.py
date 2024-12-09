@@ -2,7 +2,7 @@
 Backtesting module for cryptocurrency trading strategies.
 """
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -50,8 +50,8 @@ class Backtester:
     def run(
         self,
         pair: str,
-        start_date: str,
-        end_date: str,
+        start_date: Union[str, datetime],
+        end_date: Union[str, datetime],
         initial_capital: float,
         position_size: float,
         stop_loss: Optional[float] = None,
@@ -63,8 +63,8 @@ class Backtester:
         
         Args:
             pair: Trading pair (e.g., "BTC/USD")
-            start_date: Start date in YYYY-MM-DD format
-            end_date: End date in YYYY-MM-DD format
+            start_date: Start date as string (YYYY-MM-DD) or datetime
+            end_date: End date as string (YYYY-MM-DD) or datetime
             initial_capital: Initial capital to trade with
             position_size: Position size as fraction of capital (0-1)
             stop_loss: Optional stop loss as decimal (e.g., 0.02 for 2%)
@@ -75,8 +75,15 @@ class Backtester:
             BacktestResult object containing performance metrics and trade history
         """
         # Convert dates to timestamps
-        start_ts = int(pd.Timestamp(start_date).timestamp())
-        end_ts = int(pd.Timestamp(end_date).timestamp())
+        if isinstance(start_date, str):
+            start_ts = int(pd.Timestamp(start_date).timestamp())
+        else:
+            start_ts = int(pd.Timestamp(start_date).timestamp())
+            
+        if isinstance(end_date, str):
+            end_ts = int(pd.Timestamp(end_date).timestamp())
+        else:
+            end_ts = int(pd.Timestamp(end_date).timestamp())
         
         # Get historical data
         ohlcv_data = self.analyzer.client.get_ohlcv(pair, '1d', start_ts, end_ts)
@@ -158,15 +165,15 @@ class Backtester:
                     exit_reason = 'take_profit'
                 
                 # Check for exit signal
-                elif signal.signal == 'sell' and signal.strength > 0.3:  
+                elif signal.signal == 'sell' and signal.strength > 0.2:  
                     exit_price = current_price
                     exit_reason = 'signal'
                 
                 # Execute exit if conditions met
                 if exit_price:
-                    profit_loss = (exit_price - position.entry_price) / position.entry_price
+                    profit_loss = (exit_price - position.entry_price) * position.position_size
                     position_value = capital * position.position_size
-                    capital += position_value * profit_loss
+                    capital += position_value * (exit_price - position.entry_price) / position.entry_price
                     
                     trades.append(Trade(
                         entry_time=position.entry_time,
@@ -181,18 +188,40 @@ class Backtester:
                     ))
                     
                     position = None
+                
+                # Handle end of period
+                elif i == len(df) - 1:
+                    profit_loss = (current_price - position.entry_price) * position.position_size
+                    position_value = capital * position.position_size
+                    capital += position_value * (current_price - position.entry_price) / position.entry_price
+                    
+                    # Use the next day for exit time
+                    next_day = current_date + pd.Timedelta(days=1)
+                    
+                    trades.append(Trade(
+                        entry_time=position.entry_time,
+                        exit_time=next_day,  # Use next day for end-of-period trades
+                        entry_price=position.entry_price,
+                        exit_price=current_price,
+                        position_size=position.position_size,
+                        profit_loss=profit_loss,
+                        exit_reason='end_of_period',
+                        entry_signal=position.entry_signal,
+                        exit_signal=None
+                    ))
             
             # Check for entry conditions if not in position
-            elif signal.signal == 'buy' and signal.strength > 0.3:  
+            elif signal.signal == 'buy' and signal.strength > 0.2:  
                 position = Trade(
                     entry_time=current_date,
                     exit_time=None,  
                     entry_price=current_price,
                     exit_price=0,  
-                    position_size=current_position_size,
+                    position_size=current_position_size,  # Use dynamically calculated size
                     profit_loss=0,  
                     exit_reason='',  
-                    entry_signal=signal
+                    entry_signal=signal,
+                    exit_signal=None
                 )
             
             # Calculate daily return
@@ -202,9 +231,8 @@ class Backtester:
         # Close any open position at the end
         if position:
             final_price = float(df['close'].iloc[-1])
-            profit_loss = (final_price - position.entry_price) / position.entry_price
-            position_value = capital * position.position_size
-            capital += position_value * profit_loss
+            profit_loss = (final_price - position.entry_price) * position.position_size * capital
+            capital += profit_loss
             
             trades.append(Trade(
                 entry_time=position.entry_time,
@@ -217,22 +245,65 @@ class Backtester:
                 entry_signal=position.entry_signal
             ))
         
-        # Calculate performance metrics
-        metrics = self._calculate_metrics(trades, daily_returns, initial_capital, capital)
+        # Calculate metrics
+        total_trades = len(trades)
+        winning_trades = len([t for t in trades if t.profit_loss > 0])
+        losing_trades = len([t for t in trades if t.profit_loss < 0])
+        win_rate = winning_trades / total_trades if total_trades > 0 else 0
+        
+        # Calculate profit factor (total gains / total losses)
+        total_gains = sum(t.profit_loss for t in trades if t.profit_loss > 0)
+        total_losses = abs(sum(t.profit_loss for t in trades if t.profit_loss < 0))
+        profit_factor = total_gains / total_losses if total_losses > 0 else float('inf')
+        
+        # Calculate max drawdown
+        peak = float(initial_capital)
+        max_drawdown = 0.0
+        running_capital = float(initial_capital)
+        
+        for trade in trades:
+            running_capital += trade.profit_loss
+            if running_capital > peak:
+                peak = running_capital
+            drawdown = (peak - running_capital) / peak
+            max_drawdown = max(max_drawdown, drawdown)
+        
+        # Calculate Sharpe ratio (assuming risk-free rate of 0)
+        if len(daily_returns) > 1:
+            returns_array = np.array(daily_returns)
+            sharpe_ratio = np.mean(returns_array) / np.std(returns_array) if np.std(returns_array) > 0 else 0
+        else:
+            sharpe_ratio = 0
+        
+        # Calculate additional metrics
+        total_return = (capital - initial_capital) / initial_capital
+        trading_days = (df.index[-1] - df.index[0]).days
+        annualized_return = ((1 + total_return) ** (365 / trading_days)) - 1 if trading_days > 0 else 0
+        volatility = np.std(daily_returns) if len(daily_returns) > 1 else 0
+        
+        metrics = {
+            'win_rate': win_rate,
+            'profit_factor': profit_factor,
+            'sharpe_ratio': sharpe_ratio,
+            'max_drawdown': float(-max_drawdown),  # Make drawdown negative and ensure float
+            'total_return': total_return,
+            'annualized_return': annualized_return,
+            'volatility': volatility
+        }
         
         return BacktestResult(
             pair=pair,
             start_date=df.index[0],
             end_date=df.index[-1],
-            initial_capital=float(initial_capital),
-            final_capital=float(capital),
-            total_trades=len(trades),
-            winning_trades=sum(1 for t in trades if t.profit_loss > 0),
-            losing_trades=sum(1 for t in trades if t.profit_loss <= 0),
-            win_rate=metrics['win_rate'],
-            profit_factor=metrics['profit_factor'],
-            sharpe_ratio=metrics['sharpe_ratio'],
-            max_drawdown=metrics['max_drawdown'],
+            initial_capital=initial_capital,
+            final_capital=capital,
+            total_trades=total_trades,
+            winning_trades=winning_trades,
+            losing_trades=losing_trades,
+            win_rate=win_rate,
+            profit_factor=profit_factor,
+            sharpe_ratio=sharpe_ratio,
+            max_drawdown=float(-max_drawdown),  # Make drawdown negative and ensure float
             trades=trades,
             market_condition=market_condition,
             metrics=metrics
@@ -243,26 +314,25 @@ class Backtester:
         base_size: float,
         capital: float,
         dynamic_sizing: bool,
-        price_history: pd.DataFrame
+        price_data: pd.DataFrame
     ) -> float:
-        """Calculate position size, optionally adjusting for volatility"""
-        if not dynamic_sizing:
+        """Calculate position size based on strategy parameters"""
+        if not dynamic_sizing or len(price_data) < 2:
             return base_size
-
-        # Calculate volatility using Bollinger Band width
-        if len(price_history) >= 20:
-            prices = price_history['close']
-            bb = self.analyzer._calculate_bollinger_bands(prices)
-            bb_width = (bb['upper'] - bb['lower']) / bb['middle']
-            volatility = bb_width.iloc[-1]
             
-            # Adjust position size based on volatility
-            # Lower volatility = larger position size
-            # Higher volatility = smaller position size
-            volatility_factor = 1 - min(volatility * 2, 0.5)  # Cap reduction at 50%
-            return base_size * (1 + volatility_factor)
+        # Calculate volatility using price data
+        returns = price_data['close'].pct_change().dropna()
+        volatility = returns.std()
         
-        return base_size
+        # Adjust position size based on volatility
+        # Higher volatility = smaller position size
+        volatility_factor = 1 - np.clip(volatility * 10, 0, 0.5)  # Cap reduction at 50%
+        
+        # Ensure position size varies more in dynamic mode
+        dynamic_size = base_size * volatility_factor
+        if dynamic_size > base_size:
+            dynamic_size = base_size * 1.2  # Allow up to 20% increase
+        return dynamic_size
     
     def _determine_market_condition(self, df: pd.DataFrame) -> str:
         """Determine market condition (uptrend, downtrend, or sideways)"""

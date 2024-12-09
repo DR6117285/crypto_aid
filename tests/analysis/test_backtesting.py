@@ -7,7 +7,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch
 
-from src.analysis.technical import TechnicalAnalysis
+from src.analysis.technical import TechnicalAnalysis, TradingSignal
 from src.analysis.backtesting import Backtester, BacktestResult, Trade
 from src.market_data.kraken_client import KrakenClient
 
@@ -69,63 +69,116 @@ def backtester(mock_kraken_client):
     return Backtester(technical_analyzer)
 
 class TestBacktesting:
-    def test_backtest_basic_functionality(self, backtester):
-        """Test basic backtesting functionality"""
+    def test_backtest_basic_functionality(self, backtester, sample_price_data):
+        """Test basic backtesting functionality with a simple strategy"""
+        # Convert sample data to pandas DataFrame
+        df = pd.DataFrame(
+            sample_price_data,
+            columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        )
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+        
+        # Configure backtest parameters
+        initial_capital = 10000.0
+        position_size = 0.1  # 10% of capital per trade
+        
+        # Run backtest
         result = backtester.run(
             pair="BTC/USD",
-            start_date="2024-01-01",
-            end_date="2024-04-09",
-            initial_capital=10000,
-            position_size=0.1  # Use 10% of capital per trade
+            start_date=df['timestamp'].min(),
+            end_date=df['timestamp'].max(),
+            initial_capital=initial_capital,
+            position_size=position_size
         )
         
+        # Basic assertions
         assert isinstance(result, BacktestResult)
         assert result.pair == "BTC/USD"
-        assert result.initial_capital == 10000
-        assert isinstance(result.final_capital, float)
-        assert isinstance(result.total_trades, int)
-        assert isinstance(result.win_rate, float)
-        assert 0 <= result.win_rate <= 1
-        
-        # Verify trades list
+        assert result.initial_capital == initial_capital
+        assert result.total_trades > 0
+        assert result.winning_trades + result.losing_trades == result.total_trades
+        assert 0 <= result.win_rate <= 1.0
+        assert result.profit_factor > 0
         assert isinstance(result.trades, list)
-        if result.trades:
-            trade = result.trades[0]
-            assert isinstance(trade, Trade)
-            assert trade.entry_price > 0
-            assert trade.exit_price > 0
-            assert trade.profit_loss != 0
+        assert all(isinstance(trade, Trade) for trade in result.trades)
+        
+        # Verify trade properties
+        for trade in result.trades:
+            assert trade.entry_time < trade.exit_time
+            assert trade.position_size > 0
+            assert trade.profit_loss == (trade.exit_price - trade.entry_price) * trade.position_size
+            assert trade.exit_reason in ['take_profit', 'stop_loss', 'signal']
+            assert isinstance(trade.entry_signal, TradingSignal)
+            
+        # Verify performance metrics
+        assert 'max_drawdown' in result.metrics
+        assert 'sharpe_ratio' in result.metrics
+        assert result.max_drawdown <= 0  # drawdown should be negative or zero
+        assert isinstance(result.sharpe_ratio, float)
     
-    def test_position_sizing(self, backtester):
+    def test_position_sizing(self, backtester, sample_price_data):
         """Test different position sizing strategies"""
+        # Convert sample data to pandas DataFrame
+        df = pd.DataFrame(
+            sample_price_data,
+            columns=['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        )
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s')
+        
+        initial_capital = 10000.0
+        position_size = 0.1
+        
         # Test with fixed position size
         result_fixed = backtester.run(
             pair="BTC/USD",
-            start_date="2024-01-01",
-            end_date="2024-04-09",
-            initial_capital=10000,
-            position_size=0.1
+            start_date=df['timestamp'].min(),
+            end_date=df['timestamp'].max(),
+            initial_capital=initial_capital,
+            position_size=position_size
         )
         
         # Test with dynamic position sizing based on volatility
         result_dynamic = backtester.run(
             pair="BTC/USD",
-            start_date="2024-01-01",
-            end_date="2024-04-09",
-            initial_capital=10000,
-            position_size=0.1,
+            start_date=df['timestamp'].min(),
+            end_date=df['timestamp'].max(),
+            initial_capital=initial_capital,
+            position_size=position_size,
             dynamic_sizing=True
         )
         
-        # Dynamic sizing should adjust position size based on volatility
+        # Both strategies should generate trades
         assert len(result_fixed.trades) > 0 and len(result_dynamic.trades) > 0
         
-        # Calculate average position sizes
-        fixed_sizes = [t.position_size for t in result_fixed.trades]
+        # Dynamic sizing should adjust position sizes based on volatility
         dynamic_sizes = [t.position_size for t in result_dynamic.trades]
+        fixed_sizes = [t.position_size for t in result_fixed.trades]
         
-        # Dynamic sizing should show more variation
+        # Dynamic sizes should vary more than fixed sizes
         assert np.std(dynamic_sizes) > np.std(fixed_sizes)
+        
+        # Dynamic sizing should be more conservative in volatile periods
+        # Compare average position sizes in high volatility periods
+        high_vol_periods = []
+        for i in range(len(df) - 20):
+            window = df['close'].iloc[i:i+20]
+            volatility = np.std(window) / np.mean(window)
+            if volatility > 0.02:  # 2% threshold for high volatility
+                high_vol_periods.append(pd.Timestamp(df.index[i+19]).timestamp())  # Convert to timestamp
+        
+        dynamic_high_vol_sizes = [
+            t.position_size for t in result_dynamic.trades 
+            if any(abs(t.entry_time.timestamp() - p) <= 86400 for p in high_vol_periods)  # Within 1 day
+        ]
+        
+        fixed_high_vol_sizes = [
+            t.position_size for t in result_fixed.trades
+            if any(abs(t.entry_time.timestamp() - p) <= 86400 for p in high_vol_periods)  # Within 1 day
+        ]
+        
+        if dynamic_high_vol_sizes and fixed_high_vol_sizes:
+            # Dynamic sizing should use smaller positions in high volatility
+            assert np.mean(dynamic_high_vol_sizes) < np.mean(fixed_high_vol_sizes)
     
     def test_risk_management(self, backtester):
         """Test risk management rules"""

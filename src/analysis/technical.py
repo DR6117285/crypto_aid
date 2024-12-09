@@ -238,153 +238,133 @@ class TechnicalAnalysis:
 
     def generate_signal(self, pair: str, analysis: Dict) -> TradingSignal:
         """Generate trading signal based on technical analysis results with multi-indicator consensus"""
-        signal_components = []
-        
-        # Initialize weight factors for different types of indicators
-        weights = {
-            'trend': 1.2,  # Trend indicators get higher weight
-            'momentum': 1.0,  # Momentum indicators standard weight
-            'volatility': 0.8  # Volatility indicators lower weight as they're confirmatory
+        signal_weights = {
+            'rsi': 0.2,
+            'stochastic': 0.15,
+            'macd': 0.25,
+            'bollinger': 0.2,
+            'ichimoku': 0.2
         }
         
-        # Calculate market volatility condition
-        volatility_adjustment = 1.0
-        if 'bb_width' in analysis:
-            bb_volatility = analysis['bb_width']
-            # High volatility reduces signal strength
-            if bb_volatility > 0.05:  # High volatility threshold
-                volatility_adjustment = 0.7
-            elif bb_volatility < 0.02:  # Low volatility threshold
-                volatility_adjustment = 1.2
+        signals = []
+        strengths = []
+        indicators_used = {}
         
-        # Additional volatility check with ATR if available
-        if 'atr' in analysis:
-            atr = analysis['atr']['atr'] if isinstance(analysis['atr'], dict) else analysis['atr']
-            atr_volatility = min(atr / 1000, 1.0)  # Normalize ATR with higher threshold
-            volatility_adjustment *= (1.0 - atr_volatility * 0.3)  # Reduce strength by up to 30% for high ATR
-        
-        # Determine market trend
-        trend = 'neutral'
-        trend_confidence = 0.0
-        if 'ema_20' in analysis and 'ema_50' in analysis:
-            ema_20 = analysis['ema_20']
-            ema_50 = analysis['ema_50']
-            if ema_20 > ema_50:
-                trend = 'uptrend'
-                trend_confidence = min((ema_20 - ema_50) / ema_50 * 100, 1.0)
-            elif ema_20 < ema_50:
-                trend = 'downtrend'
-                trend_confidence = min((ema_50 - ema_20) / ema_50 * 100, 1.0)
-        
-        # RSI signals (Momentum)
+        # RSI Analysis
         if 'rsi' in analysis:
             rsi = analysis['rsi']
+            indicators_used['rsi'] = rsi
             if rsi < 30:
-                signal_strength = min((30 - rsi) / 10, 1.0) * weights['momentum']
-                signal_components.append(('buy', signal_strength))
+                signals.append(('buy', 0.8))
             elif rsi > 70:
-                signal_strength = min((rsi - 70) / 10, 1.0) * weights['momentum']
-                signal_components.append(('sell', signal_strength))
+                signals.append(('sell', 0.8))
+            else:
+                signals.append(('neutral', 0.3))
         
-        # MACD signals (Trend + Momentum)
-        if all(k in analysis for k in ['macd', 'macd_signal', 'macd_hist']):
-            macd = analysis['macd']
-            macd_signal = analysis['macd_signal']
-            macd_hist = analysis['macd_hist']
-            
-            # MACD crossover signals with increased weight for strong moves
-            if macd > macd_signal:
-                signal_strength = min(abs(macd_hist) * 2, 1.0) * weights['trend']
-                signal_components.append(('buy', signal_strength))
-            elif macd < macd_signal:
-                signal_strength = min(abs(macd_hist) * 2, 1.0) * weights['trend']
-                signal_components.append(('sell', signal_strength))
-        
-        # Stochastic signals (Momentum)
+        # Stochastic Analysis
         if 'stoch_k' in analysis and 'stoch_d' in analysis:
-            stoch_k = analysis['stoch_k']
-            stoch_d = analysis['stoch_d']
+            k = analysis['stoch_k']
+            d = analysis['stoch_d']
+            indicators_used['stoch_k'] = k
+            indicators_used['stoch_d'] = d
             
-            if stoch_k < 20 and stoch_d < 20:
-                signal_strength = min((20 - min(stoch_k, stoch_d)) / 10, 1.0) * weights['momentum'] * 1.2
-                signal_components.append(('buy', signal_strength))
-            elif stoch_k > 80 and stoch_d > 80:
-                signal_strength = min((max(stoch_k, stoch_d) - 80) / 10, 1.0) * weights['momentum'] * 1.2
-                signal_components.append(('sell', signal_strength))
+            if k < 20 and d < 20:
+                signals.append(('buy', 0.7))
+            elif k > 80 and d > 80:
+                signals.append(('sell', 0.7))
+            else:
+                signals.append(('neutral', 0.3))
         
-        # Bollinger Bands signals (Volatility)
-        if all(k in analysis for k in ['bb_upper', 'bb_lower', 'bb_middle']):
-            price = analysis.get('close', analysis['bb_middle'])
-            bb_range = analysis['bb_upper'] - analysis['bb_lower']
+        # MACD Analysis
+        if all(key in analysis for key in ['macd', 'macd_signal', 'macd_hist']):
+            macd = analysis['macd']
+            signal = analysis['macd_signal']
+            hist = analysis['macd_hist']
+            indicators_used.update({
+                'macd': macd,
+                'macd_signal': signal,
+                'macd_hist': hist
+            })
             
-            if price <= analysis['bb_lower']:
-                signal_strength = min((analysis['bb_lower'] - price) / bb_range * 3, 1.0) * weights['volatility']
-                signal_components.append(('buy', signal_strength))
-            elif price >= analysis['bb_upper']:
-                signal_strength = min((price - analysis['bb_upper']) / bb_range * 3, 1.0) * weights['volatility']
-                signal_components.append(('sell', signal_strength))
+            if macd > signal and hist > 0:
+                signals.append(('buy', 0.9 if hist > hist * 1.5 else 0.6))
+            elif macd < signal and hist < 0:
+                signals.append(('sell', 0.9 if hist < hist * 1.5 else 0.6))
+            else:
+                signals.append(('neutral', 0.3))
+        
+        # Bollinger Bands Analysis
+        if all(key in analysis for key in ['bb_upper', 'bb_middle', 'bb_lower']):
+            upper = analysis['bb_upper']
+            middle = analysis['bb_middle']
+            lower = analysis['bb_lower']
+            indicators_used.update({
+                'bb_upper': upper,
+                'bb_middle': middle,
+                'bb_lower': lower
+            })
+            
+            bb_width = (upper - lower) / middle
+            if bb_width > 0.05:  # Only generate signals if bands are wide enough
+                if middle - lower < 0.01 * middle:  # Price near lower band
+                    signals.append(('buy', 0.7))
+                elif upper - middle < 0.01 * middle:  # Price near upper band
+                    signals.append(('sell', 0.7))
+                else:
+                    signals.append(('neutral', 0.3))
+        
+        # Ichimoku Cloud Analysis
+        if 'ichimoku' in analysis:
+            cloud = analysis['ichimoku']
+            indicators_used['ichimoku'] = cloud
+            
+            tenkan = cloud['tenkan_sen']
+            kijun = cloud['kijun_sen']
+            span_a = cloud['senkou_span_a']
+            span_b = cloud['senkou_span_b']
+            
+            if tenkan > kijun and span_a > span_b:  # Strong bullish
+                signals.append(('buy', 0.8))
+            elif tenkan < kijun and span_a < span_b:  # Strong bearish
+                signals.append(('sell', 0.8))
+            else:
+                signals.append(('neutral', 0.4))
         
         # Calculate consensus
-        if not signal_components:
-            return TradingSignal(
-                pair=pair,
-                signal='neutral',
-                strength=0.0,
-                indicators={
-                    'consensus_score': 0.0,
-                    'weight_factors': weights,
-                    'volatility_adjustment': volatility_adjustment,
-                    'trend_confidence': trend_confidence
-                },
-                timestamp=time.time()
-            )
+        buy_strength = 0
+        sell_strength = 0
+        total_weight = 0
         
-        # Calculate weighted consensus
-        buy_signals = [s[1] for s in signal_components if s[0] == 'buy']
-        sell_signals = [s[1] for s in signal_components if s[0] == 'sell']
+        for signal, strength in signals:
+            weight = signal_weights.get(signal, 0.1)
+            total_weight += weight
+            
+            if signal == 'buy':
+                buy_strength += strength * weight
+            elif signal == 'sell':
+                sell_strength += strength * weight
         
-        # Use max signal strength to emphasize strong signals
-        buy_strength = max(buy_signals) if buy_signals else 0
-        sell_strength = max(sell_signals) if sell_signals else 0
-        
-        # Add bonus for signal agreement
-        if len(buy_signals) > 1:
-            buy_strength *= (1 + 0.2 * (len(buy_signals) - 1))  # Increased bonus for agreement
-        if len(sell_signals) > 1:
-            sell_strength *= (1 + 0.2 * (len(sell_signals) - 1))  # Increased bonus for agreement
-        
-        # Calculate consensus score (-1 to 1)
-        consensus_score = buy_strength - sell_strength
-        
-        # Apply market condition adjustments
-        final_strength = abs(consensus_score) * volatility_adjustment
-        if trend != 'neutral':
-            if (trend == 'uptrend' and consensus_score > 0) or (trend == 'downtrend' and consensus_score < 0):
-                final_strength *= (1 + trend_confidence * 0.3)  # Up to 30% boost for trend alignment
+        # Normalize strengths
+        if total_weight > 0:
+            buy_strength /= total_weight
+            sell_strength /= total_weight
         
         # Determine final signal
-        if consensus_score > 0:
-            signal_type = 'buy'
-        elif consensus_score < 0:
-            signal_type = 'sell'
-            final_strength = abs(final_strength)  # Ensure positive strength for sell signals
+        if buy_strength > sell_strength and buy_strength > 0.1:  
+            final_signal = 'buy'
+            strength = buy_strength
+        elif sell_strength > buy_strength and sell_strength > 0.1:  
+            final_signal = 'sell'
+            strength = sell_strength
         else:
-            signal_type = 'neutral'
-            final_strength = 0.0
+            final_signal = 'neutral'
+            strength = max(0.1, 1 - abs(buy_strength - sell_strength))  
         
         return TradingSignal(
             pair=pair,
-            signal=signal_type,
-            strength=min(final_strength, 1.0),
-            indicators={
-                'consensus_score': consensus_score,
-                'weight_factors': weights,
-                'volatility_adjustment': volatility_adjustment,
-                'trend_confidence': trend_confidence,
-                'signal_count': len(signal_components),
-                'buy_signals': len(buy_signals),
-                'sell_signals': len(sell_signals)
-            },
+            signal=final_signal,
+            strength=strength,
+            indicators=indicators_used,
             timestamp=time.time()
         )
 
