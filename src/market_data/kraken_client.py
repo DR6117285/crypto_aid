@@ -9,6 +9,10 @@ from datetime import datetime
 import logging
 from time import sleep
 from ..utils.rate_limiter import RateLimiter
+import websockets
+import json
+import asyncio
+from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +27,7 @@ class KrakenConfigError(KrakenError):
 class KrakenClient:
     """
     A client for interacting with the Kraken cryptocurrency exchange.
-    Focused on ledger entries and data export functionality.
+    Focused on ledger entries, data export functionality, and real-time data via WebSocket.
     """
     def __init__(self, api_key: str = None, private_key: str = None):
         """
@@ -43,6 +47,12 @@ class KrakenClient:
         self.rate_limiter = RateLimiter()
         self._last_request_time = datetime.now()
         self._consecutive_failures = 0
+        
+        # WebSocket specific attributes
+        self.ws = None
+        self.is_ws_connected = False
+        self.last_heartbeat = None
+        self.ws_url = "wss://ws.kraken.com"
         
     @property
     def is_healthy(self) -> bool:
@@ -117,6 +127,113 @@ class KrakenClient:
             logger.error(f"Failed after {MAX_RETRIES} attempts: {str(e)}")
             raise KrakenError(f"API request failed: {str(e)}")
         
+    async def connect_websocket(self) -> None:
+        """
+        Establish WebSocket connection to Kraken.
+        
+        Raises:
+            KrakenError: If connection fails
+        """
+        try:
+            self.ws = await websockets.connect(self.ws_url)
+            self.is_ws_connected = True
+            logger.info("WebSocket connection established")
+        except Exception as e:
+            self.is_ws_connected = False
+            raise KrakenError(f"Failed to establish WebSocket connection: {str(e)}")
+            
+    async def subscribe_ticker(self, pairs: List[str]) -> None:
+        """
+        Subscribe to ticker updates for specified pairs.
+        
+        Args:
+            pairs: List of trading pairs (e.g., ["XBT/USD", "ETH/USD"])
+            
+        Raises:
+            KrakenError: If subscription fails
+        """
+        if not self.is_ws_connected:
+            await self.connect_websocket()
+            
+        subscription = {
+            "event": "subscribe",
+            "pair": pairs,
+            "subscription": {"name": "ticker"}
+        }
+        
+        try:
+            await self.ws.send(json.dumps(subscription))
+            logger.info(f"Subscribed to ticker updates for pairs: {pairs}")
+        except Exception as e:
+            raise KrakenError(f"Failed to subscribe to ticker: {str(e)}")
+            
+    async def unsubscribe_ticker(self, pairs: List[str]) -> None:
+        """
+        Unsubscribe from ticker updates for specified pairs.
+        
+        Args:
+            pairs: List of trading pairs to unsubscribe from
+            
+        Raises:
+            KrakenError: If unsubscription fails
+        """
+        if not self.is_ws_connected:
+            return
+            
+        unsubscribe = {
+            "event": "unsubscribe",
+            "pair": pairs,
+            "subscription": {"name": "ticker"}
+        }
+        
+        try:
+            await self.ws.send(json.dumps(unsubscribe))
+            logger.info(f"Unsubscribed from ticker updates for pairs: {pairs}")
+        except Exception as e:
+            raise KrakenError(f"Failed to unsubscribe from ticker: {str(e)}")
+            
+    async def receive_message(self) -> Dict:
+        """
+        Receive and process WebSocket messages.
+        
+        Returns:
+            Dict: Processed message data
+            
+        Raises:
+            KrakenError: If message processing fails
+            ConnectionClosed: If WebSocket connection is lost
+        """
+        if not self.is_ws_connected:
+            await self.connect_websocket()
+            
+        try:
+            message = await self.ws.recv()
+            data = json.loads(message)
+            
+            # Handle heartbeat messages
+            if isinstance(data, dict) and data.get("event") == "heartbeat":
+                self.last_heartbeat = datetime.now()
+                return data
+                
+            # Handle error messages
+            if isinstance(data, dict) and data.get("event") == "error":
+                raise KrakenError(f"WebSocket error: {data.get('errorMessage')}")
+                
+            return data
+            
+        except ConnectionClosed as e:
+            self.is_ws_connected = False
+            raise e
+        except Exception as e:
+            raise KrakenError(f"Failed to process WebSocket message: {str(e)}")
+            
+    async def close_websocket(self) -> None:
+        """Close the WebSocket connection."""
+        if self.ws and self.is_ws_connected:
+            await self.ws.close()
+            self.is_ws_connected = False
+            logger.info("WebSocket connection closed")
+            
     def get_ledger_entries(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None, 
                           asset: Optional[str] = None, type: Optional[str] = None) -> pd.DataFrame:
         """
