@@ -42,7 +42,7 @@ data/
 *.csv
 *.xlsx
 *.json
-*.txt
+
 # Temporary files
 *.tmp
 .DS_Store

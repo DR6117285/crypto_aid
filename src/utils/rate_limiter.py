@@ -54,11 +54,12 @@ class TokenBucket:
             
             if not block:
                 required_time = (tokens - self.tokens) / self.fill_rate
-                return required_time
+                return max(0, required_time)
                 
             while self.tokens < tokens:
                 required_time = (tokens - self.tokens) / self.fill_rate
-                time.sleep(required_time)
+                if required_time > 0:
+                    time.sleep(required_time)
                 self._add_tokens()
             
             self.tokens -= tokens
@@ -72,9 +73,9 @@ class RateLimiter:
         """Initialize rate limiters for different endpoint types."""
         # Kraken API limits:
         # - Private endpoints: 15 requests per 45 seconds
-        # - Public endpoints: Tier 2 - 15 requests per 15 seconds
+        # - Public endpoints: More conservative rate - 10 requests per 30 seconds
         self.private_limiter = TokenBucket(capacity=15, fill_rate=1/3)  # 15 per 45 sec
-        self.public_limiter = TokenBucket(capacity=15, fill_rate=1)     # 15 per 15 sec
+        self.public_limiter = TokenBucket(capacity=10, fill_rate=1/3)   # 10 per 30 sec
         
     def acquire(self, private: bool = False, block: bool = True) -> float:
         """

@@ -1,62 +1,108 @@
-### Project Architecture
+# Crypto Aid - Project Architecture
 
-#### 1. **Market Data Acquisition**
+## Core Components
 
-- **Market Data API Integration:**
-  - Use APIs from multiple providers (e.g., CoinGecko, Binance, KuCoin) for redundancy and enhanced data accuracy
-  - Implement rate-limiting handling to avoid API usage bans
-  - Fetch additional data like order book depth and historical volatility to enhance analysis
-  - Add optional WebSocket support for real-time updates if required for faster decision-making
+### 1. Market Data Module (`src/market_data/`)
+- **Data Acquisition:**
+  - Integration with CryptoCompare API for market data
+  - Rate-limiting and API key management
+  - Historical and real-time price data fetching
 
-#### 2. **Data Processing and Analysis**
+### 2. Sentiment Analysis Module (`src/sentiment/`)
+- **Components:**
+  - `cryptocompare_client.py`: CryptoCompare API client for market and social data
+  - `trading_integration.py`: Sentiment-based trading decisions
+  - `cli.py`: Command-line interface for sentiment analysis
+- **Features:**
+  - Social sentiment analysis from CryptoCompare
+  - Trading signal generation
+  - Position sizing based on sentiment strength
+  - Integration with trading system
 
-- **Data Processing:**
-  - Standardize and normalize market data across providers
-  - Include data quality checks to handle incomplete or inconsistent data
+### 3. Analysis Module (`src/analysis/`)
+- **Technical Analysis:**
+  - Market trend analysis
+  - Technical indicators calculation
+  - Signal generation
 
-- **Analysis and Insights:**
-  - Technical analysis with multiple indicators (e.g., RSI, MACD, Bollinger Bands)
-  - Use AI/ML models to predict short-term trends based on historical data and market patterns
-  - Enhance technical analysis by adding composite indicators (e.g., Ichimoku Cloud, ATR-based volatility metrics)
-  - Allow user-defined parameters for indicator thresholds and risk levels
+### 4. Portfolio Module (`src/portfolio/`)
+- **Portfolio Management:**
+  - Asset allocation
+  - Risk management
+  - Performance tracking
 
-- **Sentiment Analysis (Optional):**
-  - Use APIs like Twitter or Google Trends to extract sentiment data
-  - Combine sentiment analysis with technical indicators for a broader perspective
+### 5. CLI Module (`src/cli/`)
+- **User Interface:**
+  - Command-line tools for market analysis
+  - Interactive query mode
+  - Data visualization options
 
-#### 3. **Decision Support**
+### 6. Utils Module (`src/utils/`)
+- **Shared Utilities:**
+  - Common functions
+  - Configuration management
+  - Logging and error handling
 
-- **Trade Signals:**
-  - Generate signals based on technical indicators and market conditions
-  - Prioritize signals based on risk-to-reward ratios and user-defined criteria
-  - Generate actionable insights with clear rationales (e.g., "Buy BTC: RSI < 30, Oversold Condition")
+## System Architecture
 
-- **Risk Assessment:**
-  - Provide volatility analysis
-  - Calculate potential risk metrics for each trading pair
-  - Assess market conditions and liquidity
+### Data Flow
+1. **Data Collection:**
+   - Market data from CryptoCompare
+   - Social sentiment data
+   - Historical price data
 
-#### 4. **User Interaction**
+2. **Processing Pipeline:**
+   - Data normalization
+   - Sentiment analysis
+   - Technical analysis
+   - Signal generation
 
-- **Command-Line Interface (CLI):**
-  - `fetch-data`: Get current market data for specified trading pairs
-  - `analyze`: Run technical analysis on specified trading pairs
-  - `recommend`: Get trade recommendations based on analysis
-  - Interactive query mode for market information
+3. **Decision Making:**
+   - Trading signals based on sentiment
+   - Position sizing recommendations
+   - Risk assessment
 
-#### 5. **System Design**
+### Testing Strategy
+- **Unit Tests:**
+  - Individual component testing
+  - Mock external API calls
+  - Test data fixtures
 
-- **Modular Architecture:**
-  - Separate modules for data fetching, analysis, and recommendations
-  - Easy to add new data sources or analysis methods
-  - Configurable parameters for analysis and risk assessment
+- **Integration Tests:**
+  - End-to-end workflow testing
+  - API integration validation
+  - Trading system integration
 
-- **Performance:**
-  - Efficient data caching
-  - Parallel processing for analysis when possible
-  - Rate limiting and request optimization
+### Security
+- **API Key Management:**
+  - Secure key storage in `keys.txt`
+  - Environment variable support
+  - Rate limiting implementation
 
-- **Reliability:**
-  - Comprehensive error handling
-  - Fallback options for data sources
-  - Logging and monitoring
+### Dependencies
+- **Core Libraries:**
+  - `cryptocompare`: Market data access
+  - `requests`: HTTP client
+  - `tabulate`: Data formatting
+  - Additional requirements in `requirements.txt`
+
+## Future Enhancements
+1. **Enhanced Analysis:**
+   - Machine learning models
+   - Advanced technical indicators
+   - Real-time alerts
+
+2. **Additional Data Sources:**
+   - Multiple exchange integration
+   - News sentiment analysis
+   - On-chain metrics
+
+3. **Portfolio Features:**
+   - Automated rebalancing
+   - Risk optimization
+   - Performance analytics
+
+4. **User Interface:**
+   - Web dashboard
+   - Mobile app integration
+   - Real-time notifications
