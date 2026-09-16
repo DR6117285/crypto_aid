@@ -46,3 +46,6 @@ data/
 # Temporary files
 *.tmp
 .DS_Store
+
+# Local credentials — never commit
+keys.txt
